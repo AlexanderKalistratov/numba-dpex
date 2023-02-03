@@ -6,13 +6,7 @@ import dpnp
 from llvmlite import ir
 from numba import errors, types
 from numba.core import cgutils
-from numba.extending import (
-    intrinsic,
-    lower_builtin,
-    overload,
-    overload_classmethod,
-    type_callable,
-)
+from numba.extending import intrinsic, overload, overload_classmethod
 
 from numba_dpex.core.types import DpnpNdArray
 
@@ -71,14 +65,13 @@ def type_dpnp_empty(
 
     if usm_type is not None:
         usm_type = _parse_usm_type(usm_type)
+    else:
+        usm_type = "device"
 
     if device is not None:
         device = _parse_device_filter_string(device)
 
-    print(">>>>>>>>>>>>>>>>>>>>>>> usm_type:", usm_type)
-    print(">>>>>>>>>>>>>>>>>>>>>>> device:", device)
-
-    if usm_type is not None and ndim is not None:
+    if ndim is not None:
         retty = DpnpNdArray(
             dtype=dtype,
             ndim=ndim,
@@ -117,35 +110,19 @@ def impl_dpnp_empty(
     ty_sycl_queue,
     ty_retty_ref,
 ):
-    print("--------getting here")
+
     ty_retty = ty_retty_ref.instance_type
-    print("ty_usm_type ---------------", ty_usm_type)
-    print("ty_device ---------------", ty_device)
+
     sig = ty_retty(
         ty_shape, ty_dtype, ty_usm_type, ty_device, ty_sycl_queue, ty_retty_ref
     )
 
     def codegen(cgctx, builder, sig, llargs):
-        print("------------CODEGEN is called !!!!!!!")
         arrtype = _parse_empty_args(cgctx, builder, sig, llargs)
         ary = _empty_nd_impl(cgctx, builder, *arrtype)
         return ary._getvalue()
 
     return sig, codegen
-
-
-"""
-@lower_builtin(dpnp.empty, types.Any, types.Any, types.Any, types.Any)
-def impl_dpnp_empty(context, builder, sig, args):
-    \"""
-    Inputs: shape, dtype, usm_type, queue
-    \"""
-    from numba.core.imputils import impl_ret_new_ref
-
-    empty_args = _parse_empty_args(context, builder, sig, args)
-    ary = _empty_nd_impl(context, builder, *empty_args)
-    return impl_ret_new_ref(context, builder, sig.return_type, ary._getvalue())
-"""
 
 
 def _parse_empty_args(context, builder, sig, args):

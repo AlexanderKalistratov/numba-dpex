@@ -8,6 +8,7 @@
 import dpctl
 import dpctl.tensor
 from numba.core.typeconv import Conversion
+from numba.core.typeinfer import CallConstraint
 from numba.core.types.npytypes import Array
 from numba.np.numpy_support import from_dtype
 
@@ -33,10 +34,7 @@ class USMNdArray(Array):
         self.usm_type = usm_type
         self.addrspace = addrspace
 
-        print("<<<<<<<<<<<<<<<< device", device)
-        print("<<<<<<<<<<<<<<<< usm_type", usm_type)
-
-        if queue is not None and device != "unknown":
+        if queue is not None and device is not None:
             if not isinstance(device, str):
                 raise TypeError(
                     "The device is expecting a str object specifying a SYCL filter selector string"
@@ -51,14 +49,14 @@ class USMNdArray(Array):
                 )
             self.queue = queue
             self.device = device
-        elif queue is None and device != "unknown":
+        elif queue is None and device is not None:
             if not isinstance(device, str):
                 raise TypeError(
                     "The device is expecting a str object specifying a SYCL filter selector string"
                 )
             self.queue = dpctl.SyclQueue(device)
             self.device = device
-        elif queue is not None and device == "unknown":
+        elif queue is not None and device is None:
             if not isinstance(queue, dpctl.SyclQueue):
                 raise TypeError("The queue is expecting a SyclQueue object")
             self.device = self.queue.sycl_device.filter_string
@@ -73,7 +71,6 @@ class USMNdArray(Array):
             )
             _dtype = dummy_tensor.dtype  # convert dpnp type to numba/numpy type
             self.dtype = from_dtype(_dtype)
-            # from_dtype(self.dtype)
 
         if name is None:
             type_name = "usm_ndarray"
@@ -97,7 +94,7 @@ class USMNdArray(Array):
             )
 
         super().__init__(
-            dtype,
+            self.dtype,
             ndim,
             layout,
             readonly=readonly,
