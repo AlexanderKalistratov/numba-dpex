@@ -349,7 +349,7 @@ static NRT_MemInfo *NRT_MemInfo_alloc_aligned_usmndarray(npy_intp size,
     mi->refct = 1; /* starts with 1 refct */
     mi->dtor = usmndarray_meminfo_dtor;
     mi->dtor_info = midtor_info;
-    if (!ext_alloca) {
+    if (ext_alloca) {
         mi->data = ext_alloca->malloc(size, qref);
     }
     else {
