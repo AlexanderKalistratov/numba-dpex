@@ -26,6 +26,8 @@
 #include "dpctl_capi.h"
 #include "dpctl_sycl_interface.h"
 
+//#include "dpctl_sycl_device_selector_interface.h"
+
 #define SYCL_USM_ARRAY_INTERFACE "__sycl_usm_array_interface__"
 
 /*
@@ -64,7 +66,7 @@ static void *usm_shared_malloc(size_t size, void *opaque_data);
 static void *usm_host_malloc(size_t size, void *opaque_data);
 static void usm_free(void *data, void *opaque_data);
 static NRT_ExternalAllocator *
-NRT_ExternalAllocator_new_for_usm(DPCTLSyclQueueRef qref, void *data);
+NRT_ExternalAllocator_new_for_usm(DPCTLSyclQueueRef qref, size_t usm_type);
 static MemInfoDtorInfo *MemInfoDtorInfo_new(NRT_MemInfo *mi, PyObject *owner);
 static NRT_MemInfo *NRT_MemInfo_new_from_usmndarray(PyObject *ndarrobj,
                                                     void *data,
@@ -144,10 +146,8 @@ static void usm_free(void *data, void *opaque_data)
  *
  */
 static NRT_ExternalAllocator *
-NRT_ExternalAllocator_new_for_usm(DPCTLSyclQueueRef qref, void *data)
+NRT_ExternalAllocator_new_for_usm(DPCTLSyclQueueRef qref, size_t usm_type)
 {
-    DPCTLSyclContextRef cref = NULL;
-    const char *usm_type_name = NULL;
 
     NRT_ExternalAllocator *allocator =
         (NRT_ExternalAllocator *)malloc(sizeof(NRT_ExternalAllocator));
@@ -157,20 +157,15 @@ NRT_ExternalAllocator_new_for_usm(DPCTLSyclQueueRef qref, void *data)
         exit(-1);
     }
 
-    // FiXME: Update to latest dpctl once dpctl #1061 is merged
-    cref = DPCTLQueue_GetContext(qref);
-    usm_type_name = DPCTLUSM_GetPointerType(data, cref);
-    DPCTLContext_Delete(cref);
-
-    if (usm_type_name)
-        switch (usm_type_name[0]) {
-        case 'd':
+    if (usm_type)
+        switch (usm_type) {
+        case 0:
             allocator->malloc = usm_device_malloc;
             break;
-        case 's':
+        case 1:
             allocator->malloc = usm_shared_malloc;
             break;
-        case 'h':
+        case 2:
             allocator->malloc = usm_host_malloc;
             break;
         default:
@@ -290,8 +285,13 @@ static NRT_MemInfo *NRT_MemInfo_new_from_usmndarray(PyObject *ndarrobj,
         exit(-1);
     }
 
+    // FiXME: Update to latest dpctl once dpctl #1061 is merged
+    DPCTLSyclContextRef cref = DPCTLQueue_GetContext(qref);
+    size_t usm_type_name = (size_t)DPCTLUSM_GetPointerType(data, cref);
+    DPCTLContext_Delete(cref);
+
     // Allocate a new NRT_ExternalAllocator
-    ext_alloca = NRT_ExternalAllocator_new_for_usm(qref, data);
+    ext_alloca = NRT_ExternalAllocator_new_for_usm(qref, usm_type_name);
 
     // Allocate a new MemInfoDtorInfo
     midtor_info = MemInfoDtorInfo_new(mi, ndarrobj);
@@ -308,6 +308,58 @@ static NRT_MemInfo *NRT_MemInfo_new_from_usmndarray(PyObject *ndarrobj,
         "DPEXRT-DEBUG: NRT_MemInfo_init mi=%p external_allocator=%p\n", mi,
         ext_alloca);
 
+    return mi;
+}
+
+/*!
+ * @brief Creates a NRT_MemInfo object from scratch
+ *
+ * @param    size         The size of dpnp.ndarray PyObject
+ * @param    align        The alignment of the dpnp.ndarray
+ * @param    usm_type     The usm type of the dpnp.ndarray.
+ * @param    device       The device of dpnp.ndarray.
+ * @return   {return}     A new NRT_MemInfo object
+ */
+static NRT_MemInfo *NRT_MemInfo_alloc_aligned_usmndarray(npy_intp size,
+                                                         npy_intp align,
+                                                         size_t usm_type,
+                                                         const char *device)
+{
+    NRT_MemInfo *mi = NULL;
+    NRT_ExternalAllocator *ext_alloca = NULL;
+    MemInfoDtorInfo *midtor_info = NULL;
+    // Allocate a new NRT_MemInfo object
+    if (!(mi = (NRT_MemInfo *)malloc(sizeof(NRT_MemInfo)))) {
+        nrt_debug_print(
+            "DPEXRT-FATAL: Could not allocate a new NRT_MemInfo object.\n");
+        exit(-1);
+    }
+
+    DPCTLSyclDeviceSelectorRef dselector = DPCTLFilterSelector_Create(device);
+    DPCTLSyclDeviceRef dref = DPCTLDevice_CreateFromSelector(dselector);
+    DPCTLSyclQueueRef qref = DPCTLQueue_CreateForDevice(dref, NULL, 0);
+
+    DPCTLDeviceSelector_Delete(dselector);
+    DPCTLDevice_Delete(dref);
+
+    // Allocate a new NRT_ExternalAllocator
+    ext_alloca = NRT_ExternalAllocator_new_for_usm(qref, usm_type);
+
+    midtor_info = MemInfoDtorInfo_new(mi, NULL);
+    mi->refct = 1; /* starts with 1 refct */
+    mi->dtor = usmndarray_meminfo_dtor;
+    mi->dtor_info = midtor_info;
+    if (!ext_alloca) {
+        mi->data = ext_alloca->malloc(size, qref);
+    }
+    else {
+        mi->data = NULL;
+    }
+    mi->size = size;
+    mi->external_allocator = ext_alloca;
+    nrt_debug_print(
+        "DPEXRT-DEBUG: NRT_MemInfo_init mi=%p external_allocator=%p\n", mi,
+        ext_alloca);
     return mi;
 }
 

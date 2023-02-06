@@ -10,7 +10,7 @@ import numba_dpex as dpex
 paths = glob.glob(
     os.path.join(
         os.path.dirname(__file__),
-        "numba_dpex/core/runtime/_dpexrt_python.cpython-310-x86_64-linux-gnu.so",
+        "numba_dpex/core/runtime/_dpexrt_python.cpython-39-x86_64-linux-gnu.so",
     )
 )
 
