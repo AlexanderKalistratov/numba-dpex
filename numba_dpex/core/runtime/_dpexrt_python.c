@@ -327,15 +327,12 @@ error:
  * @brief Creates a NRT_MemInfo object from scratch
  *
  * @param    size         The size of dpnp.ndarray PyObject
- * @param    align        The alignment of the dpnp.ndarray
  * @param    usm_type     The usm type of the dpnp.ndarray.
  * @param    device       The device of dpnp.ndarray.
  * @return   {return}     A new NRT_MemInfo object
  */
-static NRT_MemInfo *DPEXRT_MemInfo_alloc_aligned(npy_intp size,
-                                                 npy_intp align,
-                                                 size_t usm_type,
-                                                 const char *device)
+static NRT_MemInfo *
+DPEXRT_MemInfo_alloc(npy_intp size, size_t usm_type, const char *device)
 {
     NRT_MemInfo *mi = NULL;
     NRT_ExternalAllocator *ext_alloca = NULL;
@@ -380,7 +377,7 @@ static NRT_MemInfo *DPEXRT_MemInfo_alloc_aligned(npy_intp size,
 
     mi->size = size;
     mi->external_allocator = ext_alloca;
-    nrt_debug_print("DPEXRT-DEBUG: DPEXRT_MemInfo_alloc_aligned mi=%p "
+    nrt_debug_print("DPEXRT-DEBUG: DPEXRT_MemInfo_alloc mi=%p "
                     "external_allocator=%p\n",
                     mi, ext_alloca);
 
@@ -740,7 +737,7 @@ static PyObject *build_c_helpers_dict(void)
                  &DPEXRT_sycl_usm_ndarray_from_python);
     _declpointer("DPEXRT_sycl_usm_ndarray_to_python_acqref",
                  &DPEXRT_sycl_usm_ndarray_to_python_acqref);
-    _declpointer("DPEXRT_MemInfo_alloc_aligned", &DPEXRT_MemInfo_alloc_aligned);
+    _declpointer("DPEXRT_MemInfo_alloc", &DPEXRT_MemInfo_alloc);
 
 #undef _declpointer
     return dct;
@@ -767,8 +764,8 @@ MOD_INIT(_dpexrt_python)
     PyModule_AddObject(
         m, "DPEXRT_sycl_usm_ndarray_to_python_acqref",
         PyLong_FromVoidPtr(&DPEXRT_sycl_usm_ndarray_to_python_acqref));
-    PyModule_AddObject(m, "DPEXRT_MemInfo_alloc_aligned",
-                       PyLong_FromVoidPtr(&DPEXRT_MemInfo_alloc_aligned));
+    PyModule_AddObject(m, "DPEXRT_MemInfo_alloc",
+                       PyLong_FromVoidPtr(&DPEXRT_MemInfo_alloc));
 
     PyModule_AddObject(m, "c_helpers", build_c_helpers_dict());
     return MOD_SUCCESS_VAL(m);
