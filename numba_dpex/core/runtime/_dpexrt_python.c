@@ -26,37 +26,7 @@
 #include "dpctl_capi.h"
 #include "dpctl_sycl_interface.h"
 
-//#include "dpctl_sycl_device_selector_interface.h"
-
-#define SYCL_USM_ARRAY_INTERFACE "__sycl_usm_array_interface__"
-
-/*
- * The MemInfo structure.
- * NOTE: copy from numba/core/runtime/nrt.c
- */
-struct MemInfo
-{
-    size_t refct;
-    NRT_dtor_function dtor;
-    void *dtor_info;
-    void *data;
-    size_t size; /* only used for NRT allocated memory */
-    NRT_ExternalAllocator *external_allocator;
-};
-
-/*!
- * @brief A wrapper struct to store a MemInfo pointer along with the PyObject
- * that is associated with the MeMinfo.
- *
- * The struct is stored in the dtor_info attribute of a MemInfo object and
- * used by the destructor to free the MemInfo and DecRef the Pyobject.
- *
- */
-typedef struct
-{
-    PyObject *owner;
-    NRT_MemInfo *mi;
-} MemInfoDtorInfo;
+#include "_nrt_python_helper.h"
 
 // forward declarations
 static struct PyUSMArrayObject *PyUSMNdArray_ARRAYOBJ(PyObject *obj);
@@ -574,11 +544,11 @@ DPEXRT_sycl_usm_ndarray_to_python_acqref(arystruct_t *arystruct,
                                          int writeable,
                                          PyArray_Descr *descr)
 {
-    PyObject *array = NULL;
-    //    MemInfoObject *miobj = NULL;
-    //    PyObject *args;
-    //     npy_intp *shape, *strides;
-    //     int flags = 0;
+    PyArrayObject *array = NULL;
+    MemInfoObject *miobj = NULL;
+    PyObject *args;
+    npy_intp *shape, *strides;
+    int flags = 0;
 
     nrt_debug_print(
         "DPEXRT-DEBUG: In DPEXRT_sycl_usm_ndarray_to_python_acqref.\n");
@@ -605,73 +575,69 @@ DPEXRT_sycl_usm_ndarray_to_python_acqref(arystruct_t *arystruct,
         }
     }
 
-    //     if (arystruct->meminfo) {
-    //         /* wrap into MemInfoObject */
-    //         miobj = PyObject_New(MemInfoObject, &MemInfoType);
-    //         args = PyTuple_New(1);
-    //         /* SETITEM steals reference */
-    //         PyTuple_SET_ITEM(args, 0,
-    //         PyLong_FromVoidPtr(arystruct->meminfo));
-    //         NRT_Debug(nrt_debug_print("NRT_adapt_ndarray_to_python
-    //         arystruct->meminfo=%p\n", arystruct->meminfo));
-    //         /*  Note: MemInfo_init() does not incref.  This function steals
-    //         the
-    //          *        NRT reference, which we need to acquire.
-    //          */
-    //         NRT_Debug(nrt_debug_print("NRT_adapt_ndarray_to_python_acqref
-    //         created MemInfo=%p\n", miobj));
-    //         NRT_MemInfo_acquire(arystruct->meminfo);
-    //         if (MemInfo_init(miobj, args, NULL)) {
-    //             NRT_Debug(nrt_debug_print("MemInfo_init failed.\n"));
-    //             return NULL;
-    //         }
-    //         Py_DECREF(args);
-    //     }
+    if (arystruct->meminfo) {
+        /* wrap into MemInfoObject */
+        miobj = PyObject_New(MemInfoObject, &MemInfoType);
+        args = PyTuple_New(1);
+        /* SETITEM steals reference */
+        PyTuple_SET_ITEM(args, 0, PyLong_FromVoidPtr(arystruct->meminfo));
+        NRT_Debug(nrt_debug_print(
+            "NRT_adapt_ndarray_to_python arystruct->meminfo=%p\n",
+            arystruct->meminfo));
+        /*  Note: MemInfo_init() does not incref.  This function steals
+        the
+            *        NRT reference, which we need to acquire.
+            */
+        NRT_Debug(nrt_debug_print(
+            "NRT_adapt_ndarray_to_python_acqref created MemInfo=%p\n", miobj));
+        NRT_MemInfo_acquire(arystruct->meminfo); // this is doing mi->refct++
 
-    //     shape = arystruct->shape_and_strides;
-    //     strides = shape + ndim;
-    //     Py_INCREF((PyObject *) descr);
-    //     array = (PyArrayObject *) PyArray_NewFromDescr(retty, descr, ndim,
-    //                                                    shape, strides,
-    //                                                    arystruct->data,
-    //                                                    flags, (PyObject *)
-    //                                                    miobj);
+        if (MemInfo_init(miobj, args, NULL)) {
+            NRT_Debug(nrt_debug_print("MemInfo_init failed.\n"));
+            return NULL;
+        }
+        Py_DECREF(args);
+    }
 
-    //     if (array == NULL)
-    //         return NULL;
+    shape = arystruct->shape_and_strides;
+    strides = shape + ndim;
+    Py_INCREF((PyObject *)descr);
+    array = (PyArrayObject *)PyArray_NewFromDescr(retty, descr, ndim, shape,
+                                                  strides, arystruct->data,
+                                                  flags, (PyObject *)miobj);
 
-    //     /* Set writable */
-    // #if NPY_API_VERSION >= 0x00000007
-    //     if (writeable) {
-    //         PyArray_ENABLEFLAGS(array, NPY_ARRAY_WRITEABLE);
-    //     }
-    //     else {
-    //         PyArray_CLEARFLAGS(array, NPY_ARRAY_WRITEABLE);
-    //     }
-    // #else
-    //     if (writeable) {
-    //         array->flags |= NPY_WRITEABLE;
-    //     }
-    //     else {
-    //         array->flags &= ~NPY_WRITEABLE;
-    //     }
-    // #endif
+    if (array == NULL)
+        return NULL;
 
-    //     if (miobj) {
-    //         /* Set the MemInfoObject as the base object */
-    // #if NPY_API_VERSION >= 0x00000007
-    //         if (-1 == PyArray_SetBaseObject(array,
-    //                                         (PyObject *) miobj))
-    //         {
-    //             Py_DECREF(array);
-    //             Py_DECREF(miobj);
-    //             return NULL;
-    //         }
-    // #else
-    //         PyArray_BASE(array) = (PyObject *) miobj;
-    // #endif
+        /* Set writable */
+#if NPY_API_VERSION >= 0x00000007
+    if (writeable) {
+        PyArray_ENABLEFLAGS(array, NPY_ARRAY_WRITEABLE);
+    }
+    else {
+        PyArray_CLEARFLAGS(array, NPY_ARRAY_WRITEABLE);
+    }
+#else
+    if (writeable) {
+        array->flags |= NPY_WRITEABLE;
+    }
+    else {
+        array->flags &= ~NPY_WRITEABLE;
+    }
+#endif
 
-    //     }
+    if (miobj) {
+        /* Set the MemInfoObject as the base object */
+#if NPY_API_VERSION >= 0x00000007
+        if (-1 == PyArray_SetBaseObject(array, (PyObject *)miobj)) {
+            Py_DECREF(array);
+            Py_DECREF(miobj);
+            return NULL;
+        }
+#else
+        PyArray_BASE(array) = (PyObject *)miobj;
+#endif
+    }
     return (PyObject *)array;
 }
 
