@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2020 - 2022 Intel Corporation
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /*
  * Definition of NRT functions for marshalling from / to Python objects.
  * This module is included by _nrt_pythonmod.c and by pycc-compiled modules.
