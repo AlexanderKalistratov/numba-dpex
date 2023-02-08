@@ -166,6 +166,8 @@ def dpjit(*args, **kws):
         del kws["forceobj"]
     kws.update({"nopython": True})
     kws.update({"pipeline_class": OffloadCompiler})
+    kws.update({"_target": "dpex"})
+
     return decorators.jit(*args, **kws)
 
 

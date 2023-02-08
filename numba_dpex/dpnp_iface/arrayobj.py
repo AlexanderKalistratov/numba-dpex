@@ -118,14 +118,28 @@ def _empty_nd_impl(context, builder, arrtype, shapes):
             ),
         )
 
-    dtype = arrtype.dtype
-    align_val = context.get_preferred_array_alignment(dtype)
-    align = context.get_constant(types.uint32, align_val)
-    args = (context.get_dummy_value(), allocsize, align)
+    # FIXME: Add support for aligned allocations
+    # dtype = arrtype.dtype
+    # align_val = context.get_preferred_array_alignment(dtype)
+    # align = context.get_constant(types.uint32, align_val)
 
+    usm_ty = arrtype.usm_type
+    usm_ty_val = 0
+    if usm_ty == "device":
+        usm_ty_val = 1
+    elif usm_ty == "shared":
+        usm_ty_val = 2
+    elif usm_ty == "host":
+        usm_ty_val = 3
+    usm_type = context.get_constant(types.uint32, usm_ty_val)
+    device = context.insert_const_string(builder.module, arrtype.device)
+
+    args = (context.get_dummy_value(), allocsize, usm_type, device)
     mip = types.MemInfoPointer(types.voidptr)
     arytypeclass = types.TypeRef(type(arrtype))
-    argtypes = signature(mip, arytypeclass, types.intp, types.uint32)
+    argtypes = signature(
+        mip, arytypeclass, types.intp, types.uint32, types.voidptr
+    )
 
     meminfo = context.compile_internal(builder, _call_allocator, argtypes, args)
     data = context.nrt.meminfo_data(builder, meminfo)
@@ -146,34 +160,34 @@ def _empty_nd_impl(context, builder, arrtype, shapes):
     return ary
 
 
-@overload_classmethod(DpnpNdArray, "_allocate")
-def _ol_array_allocate(cls, allocsize, align):
-    """Implements a Numba-only default target (cpu) classmethod on the
-    array type.
-    """
+@overload_classmethod(DpnpNdArray, "_allocate", target="dpex")
+def _ol_array_allocate(cls, allocsize, usm_type, device):
+    """Implements an allocator for dpnp.ndarrays."""
 
-    def impl(cls, allocsize, align):
-        return intrin_alloc(allocsize, align)
+    def impl(cls, allocsize, usm_type, device):
+        return intrin_alloc(allocsize, usm_type, device)
 
     return impl
 
 
-def _call_allocator(arrtype, size, align):
+def _call_allocator(arrtype, size, usm_type, device):
     """Trampoline to call the intrinsic used for allocation"""
-    return arrtype._allocate(size, align)
+    return arrtype._allocate(size, usm_type, device)
 
 
 @intrinsic
-def intrin_alloc(typingctx, allocsize, align):
+def intrin_alloc(typingctx, allocsize, usm_type, device):
     """Intrinsic to call into the allocator for Array"""
 
     def codegen(context, builder, signature, args):
-        [allocsize, align] = args
-        meminfo = context.nrt.meminfo_alloc_aligned(builder, allocsize, align)
+        [allocsize, usm_type, device] = args
+        meminfo = context.dpexrt.meminfo_alloc(
+            builder, allocsize, usm_type, device
+        )
         return meminfo
 
     mip = types.MemInfoPointer(types.voidptr)  # return untyped pointer
-    sig = signature(mip, allocsize, align)
+    sig = signature(mip, allocsize, usm_type, device)
     return sig, codegen
 
 
@@ -184,14 +198,11 @@ def impl_dpnp_empty(
     ty_dtype,
     ty_usm_type,
     ty_device,
-    ty_sycl_queue,
     ty_retty_ref,
 ):
     ty_retty = ty_retty_ref.instance_type
 
-    sig = ty_retty(
-        ty_shape, ty_dtype, ty_usm_type, ty_device, ty_sycl_queue, ty_retty_ref
-    )
+    sig = ty_retty(ty_shape, ty_dtype, ty_usm_type, ty_device, ty_retty_ref)
 
     def codegen(cgctx, builder, sig, llargs):
         arrtype = _parse_empty_args(cgctx, builder, sig, llargs)
@@ -205,10 +216,8 @@ def impl_dpnp_empty(
 # Dpnp array constructor overloads
 
 
-@overload(dpnp.empty, prefer_literal=True)
-def type_dpnp_empty(
-    shape, dtype=None, usm_type=None, device=None, order="C", sycl_queue=None
-):
+@overload(dpnp.empty, prefer_literal=True, target="dpex")
+def type_dpnp_empty(shape, dtype=None, usm_type=None, device=None):
     """Implementation of an overload to support dpnp.empty inside a jit
     function.
 
@@ -243,10 +252,8 @@ def type_dpnp_empty(
         retty = DpnpNdArray(
             dtype=dtype,
             ndim=ndim,
-            layout=order,
             usm_type=usm_type,
             device=device,
-            queue=None,
         )
 
         def impl(
@@ -254,12 +261,8 @@ def type_dpnp_empty(
             dtype=None,
             usm_type=None,
             device=None,
-            order="C",
-            sycl_queue=None,
         ):
-            return impl_dpnp_empty(
-                shape, dtype, usm_type, device, sycl_queue, retty
-            )
+            return impl_dpnp_empty(shape, dtype, usm_type, device, retty)
 
         return impl
     else:

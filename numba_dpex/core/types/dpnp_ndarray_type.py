@@ -25,62 +25,6 @@ class DpnpNdArray(USMNdArray):
 # --------------- Boxing/Unboxing logic for dpnp.ndarray ----------------------#
 
 
-class _DpnpAdapterGenerator:
-    """Helper class to translate a dpnp.ndarray Python object to a
-    corresponding Numba representation using a dpex runtime C function call.
-    """
-
-    def __init__(self):
-        self.error = None
-
-    def from_python(self, pyapi: PythonAPI, obj, ptr):
-        """Generates a call to dpex_rt_dpnp_ndarray_from_python C function
-        defined in the dpex runtime.
-        """
-        import llvmlite.llvmpy.core as lc
-        from llvmlite.llvmpy.core import Type
-
-        fnty = Type.function(Type.int(), [pyapi.pyobj, pyapi.voidptr])
-        fn = pyapi._get_function(fnty, "DPEXRT_sycl_usm_ndarray_from_python")
-        fn.args[0].add_attribute(lc.ATTR_NO_CAPTURE)
-        fn.args[1].add_attribute(lc.ATTR_NO_CAPTURE)
-
-        self.error = pyapi.builder.call(fn, (obj, ptr))
-
-        return self.error
-
-    def to_python(self, pyapi: PythonAPI, aryty, ary, dtypeptr):
-        from llvmlite.ir import IntType
-        from llvmlite.llvmpy.core import ATTR_NO_CAPTURE, Type
-        from numba.core import types
-
-        args = [
-            pyapi.voidptr,
-            pyapi.pyobj,
-            IntType(32),
-            IntType(32),
-            pyapi.pyobj,
-        ]
-        fnty = Type.function(pyapi.pyobj, args)
-        fn = pyapi._get_function(
-            fnty, "DPEXRT_sycl_usm_ndarray_to_python_acqref"
-        )
-        fn.args[0].add_attribute(ATTR_NO_CAPTURE)
-
-        aryptr = cgutils.alloca_once_value(pyapi.builder, ary)
-        ptr = pyapi.builder.bitcast(aryptr, pyapi.voidptr)
-
-        # Embed the Python type of the array (maybe subclass) in the LLVM IR.
-        serialized = pyapi.serialize_object(aryty.box_type)
-        serial_aryty_pytype = pyapi.unserialize(serialized)
-
-        ndim = pyapi.context.get_constant(types.int32, aryty.ndim)
-        writable = pyapi.context.get_constant(types.int32, int(aryty.mutable))
-
-        args = [ptr, serial_aryty_pytype, ndim, writable, dtypeptr]
-        return pyapi.builder.call(fn, args)
-
-
 @unbox(DpnpNdArray)
 def unbox_dpnp_nd_array(typ, obj, c):
     """Converts a dpnp.ndarray object to a Numba internal array structure.
@@ -115,8 +59,7 @@ def unbox_dpnp_nd_array(typ, obj, c):
     ptr = c.builder.bitcast(aryptr, c.pyapi.voidptr)
     # FIXME : We need to check if Numba_RT as well as DPEX RT are enabled.
     if c.context.enable_nrt:
-        adapter = _DpnpAdapterGenerator()
-        errcode = adapter.from_python(c.pyapi, obj, ptr)
+        errcode = c.context.dpexrt.arraystruct_from_python(c.pyapi, obj, ptr)
     else:
         raise UnreachableError
 
@@ -155,9 +98,9 @@ def box_array(typ, val, c):
     if c.context.enable_nrt:
         np_dtype = numpy_support.as_dtype(typ.dtype)
         dtypeptr = c.env_manager.read_const(c.env_manager.add_const(np_dtype))
-
-        adapter = _DpnpAdapterGenerator()
-        newary = adapter.to_python(c.pyapi, typ, val, dtypeptr)
+        newary = c.context.dpexrt.usm_ndarray_to_python_acqref(
+            c.pyapi, typ, val, dtypeptr
+        )
 
         # Steals NRT ref
         # Refer:

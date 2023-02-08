@@ -5,6 +5,7 @@
 """Defines the target and typing contexts for numba_dpex's dpjit decorator.
 """
 
+from numba.core import utils
 from numba.core.cpu import CPUContext
 from numba.core.target_extension import CPU, target_registry
 
@@ -23,3 +24,9 @@ target_registry[DPEX_TARGET_NAME] = Dpex
 class DpexTargetContext(CPUContext):
     def __init__(self, typingctx, target=DPEX_TARGET_NAME):
         super().__init__(typingctx, target)
+
+    @utils.cached_property
+    def dpexrt(self):
+        from numba_dpex.core.runtime.context import DpexRTContext
+
+        return DpexRTContext(self)
