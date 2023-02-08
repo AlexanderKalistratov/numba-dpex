@@ -1,26 +1,12 @@
-import ctypes
-import glob
-import os
-
 import dpnp
 import numpy as np
 
 import numba_dpex as dpex
 
-paths = glob.glob(
-    os.path.join(
-        os.path.dirname(__file__),
-        "numba_dpex/core/runtime/_dpexrt_python.cpython-39-x86_64-linux-gnu.so",
-    )
-)
-
-print("path:", paths[0])
-
-ctypes.cdll.LoadLibrary(paths[0])
-
 
 @dpex.dpjit
 def foo(Arr):
+    dpnp.empty(10)
     return Arr
 
 
